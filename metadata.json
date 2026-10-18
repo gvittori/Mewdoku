@@ -1,0 +1,6 @@
+{
+  "name": "Mewdoku",
+  "description": "A cute logic puzzle game blending the spatial constraints of Sudoku, Queens, and Minesweeper with adorable cats.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
