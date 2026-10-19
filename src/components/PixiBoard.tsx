@@ -6,11 +6,24 @@ import { REGION_COLORS, CAT_BREEDS } from '../utils/levels';
 interface PixiBoardProps {
   level: Level;
   boardState: CellState[][];
-  onCellClick: (r: number, c: number, type: 'single' | 'double') => void;
+  onCellClick: (r: number, c: number) => void;
   equippedBreed: string;
   conflicts: { rows: Set<number>; cols: Set<number>; regions: Set<number>; adjacencies: Set<string> };
   hintCell?: { r: number; c: number; timestamp: number } | null;
   wrongCatCell?: { r: number; c: number; timestamp: number } | null;
+}
+
+interface CellView {
+  container: PIXI.Container;
+  bgGraphics: PIXI.Graphics;
+  hintGraphics: PIXI.Graphics;
+  wrongGraphics: PIXI.Graphics;
+  catContainer: PIXI.Container;
+  catText: PIXI.Text;
+  accText: PIXI.Text;
+  crossGraphics: PIXI.Graphics;
+  sparkleText: PIXI.Text;
+  wrongXGraphics: PIXI.Graphics;
 }
 
 export const PixiBoard: React.FC<PixiBoardProps> = ({
@@ -24,7 +37,6 @@ export const PixiBoard: React.FC<PixiBoardProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
-  const pendingTapRef = useRef<{ r: number; c: number; time: number; timer: any } | null>(null);
 
   // Animation metadata per cell
   const animMapRef = useRef<Map<string, { startTime: number; type: CellState }>>(new Map());
@@ -75,17 +87,7 @@ export const PixiBoard: React.FC<PixiBoardProps> = ({
         }
       });
     });
-
-    boardDataRef.current = {
-      boardState,
-      conflicts,
-      equippedBreed,
-      level,
-      onCellClick,
-      hintCell,
-      wrongCatCell,
-    };
-  }, [boardState, conflicts, equippedBreed, level, onCellClick, hintCell, wrongCatCell]);
+  }, [boardState]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -123,26 +125,114 @@ export const PixiBoard: React.FC<PixiBoardProps> = ({
       const boardContainer = new PIXI.Container();
       app.stage.addChild(boardContainer);
 
+      // Pre-create cell views once to eliminate per-frame object allocation and GC overhead
+      const cellViews: CellView[][] = [];
+
+      for (let r = 0; r < n; r++) {
+        cellViews[r] = [];
+        for (let c = 0; c < n; c++) {
+          const cellContainer = new PIXI.Container();
+          cellContainer.x = c * cellSize;
+          cellContainer.y = r * cellSize;
+
+          const bgGraphics = new PIXI.Graphics();
+          const hintGraphics = new PIXI.Graphics();
+          const wrongGraphics = new PIXI.Graphics();
+
+          const catContainer = new PIXI.Container();
+          catContainer.x = cellSize / 2;
+          catContainer.y = cellSize / 2;
+
+          const catText = new PIXI.Text({
+            text: '🐱',
+            style: { fontSize: cellSize * 0.55, align: 'center' },
+          });
+          catText.anchor.set(0.5);
+          catContainer.addChild(catText);
+
+          const accText = new PIXI.Text({
+            text: '',
+            style: { fontSize: cellSize * 0.3 },
+          });
+          accText.anchor.set(0.5);
+          accText.x = -cellSize * 0.2;
+          accText.y = -cellSize * 0.25;
+          catContainer.addChild(accText);
+
+          const crossGraphics = new PIXI.Graphics();
+          crossGraphics.x = cellSize / 2;
+          crossGraphics.y = cellSize / 2;
+
+          const sparkleText = new PIXI.Text({
+            text: '✨',
+            style: { fontSize: cellSize * 0.45, align: 'center' },
+          });
+          sparkleText.anchor.set(0.5);
+          sparkleText.x = cellSize / 2;
+          sparkleText.y = cellSize / 2;
+
+          const wrongXGraphics = new PIXI.Graphics();
+          wrongXGraphics.x = cellSize / 2;
+          wrongXGraphics.y = cellSize / 2;
+
+          cellContainer.addChild(bgGraphics);
+          cellContainer.addChild(hintGraphics);
+          cellContainer.addChild(wrongGraphics);
+          cellContainer.addChild(catContainer);
+          cellContainer.addChild(crossGraphics);
+          cellContainer.addChild(sparkleText);
+          cellContainer.addChild(wrongXGraphics);
+
+          // Hit area for interaction
+          const hitArea = new PIXI.Graphics();
+          hitArea.rect(0, 0, cellSize, cellSize);
+          hitArea.fill({ color: 0x000000, alpha: 0 });
+          hitArea.eventMode = 'static';
+          hitArea.cursor = 'pointer';
+
+          const rowIdx = r;
+          const colIdx = c;
+          hitArea.on('pointerdown', () => {
+            boardDataRef.current.onCellClick(rowIdx, colIdx);
+          });
+          cellContainer.addChild(hitArea);
+
+          boardContainer.addChild(cellContainer);
+
+          cellViews[r][c] = {
+            container: cellContainer,
+            bgGraphics,
+            hintGraphics,
+            wrongGraphics,
+            catContainer,
+            catText,
+            accText,
+            crossGraphics,
+            sparkleText,
+            wrongXGraphics,
+          };
+        }
+      }
+
       app.ticker.add((ticker) => {
         if (!isMounted) return;
         const currentData = boardDataRef.current;
-        const { boardState: state, conflicts: conf, equippedBreed: breedId, hintCell: activeHint } = currentData;
+        const { boardState: state, conflicts: conf, equippedBreed: breedId, hintCell: activeHint, wrongCatCell: activeWrong, level: currentLevel } = currentData;
         const breed = CAT_BREEDS.find((b) => b.id === breedId) || CAT_BREEDS[0];
         const now = performance.now();
+        const activeSize = currentLevel.size;
 
-        boardContainer.removeChildren();
+        for (let r = 0; r < activeSize; r++) {
+          for (let c = 0; c < activeSize; c++) {
+            const view = cellViews[r] && cellViews[r][c];
+            if (!view) continue;
 
-        for (let r = 0; r < n; r++) {
-          for (let c = 0; c < n; c++) {
-            const x = c * cellSize;
-            const y = r * cellSize;
-            const regionId = level.regions[r][c];
-            const cellState = state[r][c];
+            const regionId = currentLevel.regions[r][c];
+            const cellState = (state[r] && state[r][c]) || 'empty';
             const key = `${r},${c}`;
 
-            const cellGraphics = new PIXI.Graphics();
+            // 1. Background & Border
             const baseColor = parseInt(REGION_COLORS[regionId % REGION_COLORS.length].replace('#', ''), 16);
-
             const hasConflict =
               (cellState === 'cat' &&
                 (conf.rows.has(r) || conf.cols.has(c) || conf.regions.has(regionId) || conf.adjacencies.has(`${r},${c}`)));
@@ -150,76 +240,78 @@ export const PixiBoard: React.FC<PixiBoardProps> = ({
             const fillColor = hasConflict ? 0xfecaca : baseColor;
             const alpha = hasConflict ? 0.9 : 0.75;
 
-            // Rounded squares with clean border and no dark lines separating colored blocks
-            cellGraphics.roundRect(x + 1.5, y + 1.5, cellSize - 3, cellSize - 3, 7);
-            cellGraphics.fill({ color: fillColor, alpha });
-            cellGraphics.stroke({ width: 1.5, color: 0xffffff, alpha: 0.95 });
+            view.bgGraphics.clear();
+            view.bgGraphics.roundRect(1.5, 1.5, cellSize - 3, cellSize - 3, 7);
+            view.bgGraphics.fill({ color: fillColor, alpha });
+            view.bgGraphics.stroke({ width: 1.5, color: 0xffffff, alpha: 0.95 });
 
-            boardContainer.addChild(cellGraphics);
-
-            // Check if this cell has an active hint with fading animation (without marking it directly)
+            // 2. Hint Glow & Sparkle
             if (activeHint && activeHint.r === r && activeHint.c === c) {
               const hintElapsed = now - activeHint.timestamp;
               if (hintElapsed < 2600) {
                 const hintProgress = hintElapsed / 2600;
                 const alphaWave = (1 - hintProgress) * (0.7 + 0.3 * Math.sin(hintElapsed * 0.01));
 
-                const hintGlow = new PIXI.Graphics();
-                hintGlow.roundRect(x + 1.5, y + 1.5, cellSize - 3, cellSize - 3, 7);
-                hintGlow.fill({ color: 0xfef08a, alpha: alphaWave * 0.5 });
-                hintGlow.stroke({ width: 3, color: 0xf59e0b, alpha: alphaWave * 0.95 });
-                boardContainer.addChild(hintGlow);
+                view.hintGraphics.clear();
+                view.hintGraphics.roundRect(1.5, 1.5, cellSize - 3, cellSize - 3, 7);
+                view.hintGraphics.fill({ color: 0xfef08a, alpha: alphaWave * 0.5 });
+                view.hintGraphics.stroke({ width: 3, color: 0xf59e0b, alpha: alphaWave * 0.95 });
+                view.hintGraphics.visible = true;
 
                 if (cellState === 'empty') {
-                  const sparkle = new PIXI.Text({
-                    text: '✨',
-                    style: {
-                      fontSize: cellSize * 0.45,
-                      align: 'center',
-                    },
-                  });
-                  sparkle.anchor.set(0.5);
-                  sparkle.x = x + cellSize / 2;
-                  sparkle.y = y + cellSize / 2;
-                  sparkle.alpha = alphaWave;
-                  boardContainer.addChild(sparkle);
+                  view.sparkleText.alpha = alphaWave;
+                  view.sparkleText.visible = true;
+                } else {
+                  view.sparkleText.visible = false;
                 }
+              } else {
+                view.hintGraphics.clear();
+                view.hintGraphics.visible = false;
+                view.sparkleText.visible = false;
               }
+            } else {
+              view.hintGraphics.clear();
+              view.hintGraphics.visible = false;
+              view.sparkleText.visible = false;
             }
 
-            // Check if this cell has an active fading red X animation
-            const wrong = currentData.wrongCatCell;
-            if (wrong && wrong.r === r && wrong.c === c) {
-              const wrongElapsed = now - wrong.timestamp;
+            // 3. Wrong Cat Red X Animation
+            if (activeWrong && activeWrong.r === r && activeWrong.c === c) {
+              const wrongElapsed = now - activeWrong.timestamp;
               if (wrongElapsed < 1600) {
                 const progress = wrongElapsed / 1600;
-                const alpha = Math.max(0, 1 - progress);
+                const alphaX = Math.max(0, 1 - progress);
                 const popScale = Math.min(1.25, 0.7 + 0.55 * Math.sin(Math.min(1, progress * 3) * Math.PI / 2));
 
-                const wrongGlow = new PIXI.Graphics();
-                wrongGlow.roundRect(x + 1.5, y + 1.5, cellSize - 3, cellSize - 3, 7);
-                wrongGlow.fill({ color: 0xfee2e2, alpha: alpha * 0.75 });
-                wrongGlow.stroke({ width: 3, color: 0xef4444, alpha });
-                boardContainer.addChild(wrongGlow);
+                view.wrongGraphics.clear();
+                view.wrongGraphics.roundRect(1.5, 1.5, cellSize - 3, cellSize - 3, 7);
+                view.wrongGraphics.fill({ color: 0xfee2e2, alpha: alphaX * 0.75 });
+                view.wrongGraphics.stroke({ width: 3, color: 0xef4444, alpha: alphaX });
+                view.wrongGraphics.visible = true;
 
-                const redXContainer = new PIXI.Container();
-                redXContainer.x = x + cellSize / 2;
-                redXContainer.y = y + cellSize / 2;
-                redXContainer.scale.set(popScale);
-
-                const redXGfx = new PIXI.Graphics();
+                view.wrongXGraphics.clear();
                 const pad = cellSize * 0.22;
-                redXGfx.moveTo(-cellSize / 2 + pad, -cellSize / 2 + pad);
-                redXGfx.lineTo(cellSize / 2 - pad, cellSize / 2 - pad);
-                redXGfx.moveTo(cellSize / 2 - pad, -cellSize / 2 + pad);
-                redXGfx.lineTo(-cellSize / 2 + pad, cellSize / 2 - pad);
-                redXGfx.stroke({ width: 5, color: 0xdc2626, alpha });
-
-                redXContainer.addChild(redXGfx);
-                boardContainer.addChild(redXContainer);
+                view.wrongXGraphics.moveTo(-cellSize / 2 + pad, -cellSize / 2 + pad);
+                view.wrongXGraphics.lineTo(cellSize / 2 - pad, cellSize / 2 - pad);
+                view.wrongXGraphics.moveTo(cellSize / 2 - pad, -cellSize / 2 + pad);
+                view.wrongXGraphics.lineTo(-cellSize / 2 + pad, cellSize / 2 - pad);
+                view.wrongXGraphics.stroke({ width: 5, color: 0xdc2626, alpha: alphaX });
+                view.wrongXGraphics.scale.set(popScale);
+                view.wrongXGraphics.visible = true;
+              } else {
+                view.wrongGraphics.clear();
+                view.wrongGraphics.visible = false;
+                view.wrongXGraphics.clear();
+                view.wrongXGraphics.visible = false;
               }
+            } else {
+              view.wrongGraphics.clear();
+              view.wrongGraphics.visible = false;
+              view.wrongXGraphics.clear();
+              view.wrongXGraphics.visible = false;
             }
 
+            // 4. Click Pop Animation & Wiggle
             const anim = animMapRef.current.get(key);
             let scaleMultiplier = 1;
             if (anim) {
@@ -233,6 +325,9 @@ export const PixiBoard: React.FC<PixiBoardProps> = ({
             }
 
             if (cellState === 'cat') {
+              view.crossGraphics.clear();
+              view.crossGraphics.visible = false;
+
               let wiggleAngle = 0;
               let wiggleScale = 1;
               const wiggleData = wiggleMapRef.current.get(key);
@@ -248,88 +343,37 @@ export const PixiBoard: React.FC<PixiBoardProps> = ({
                 }
               }
 
-              const catContainer = new PIXI.Container();
-              catContainer.x = x + cellSize / 2;
-              catContainer.y = y + cellSize / 2;
-              catContainer.scale.set(scaleMultiplier * wiggleScale);
-              catContainer.rotation = wiggleAngle;
-
-              const catText = new PIXI.Text({
-                text: breed.icon || '🐱',
-                style: {
-                  fontSize: cellSize * 0.55,
-                  align: 'center',
-                },
-              });
-              catText.anchor.set(0.5);
-              catContainer.addChild(catText);
+              view.catText.text = breed.icon || '🐱';
+              view.catText.style.fontSize = cellSize * 0.55;
 
               if (breed.accessory) {
-                const accText = new PIXI.Text({
-                  text: breed.accessory,
-                  style: {
-                    fontSize: cellSize * 0.3,
-                  },
-                });
-                accText.anchor.set(0.5);
-                accText.x = -cellSize * 0.2;
-                accText.y = -cellSize * 0.25;
-                catContainer.addChild(accText);
+                view.accText.text = breed.accessory;
+                view.accText.style.fontSize = cellSize * 0.3;
+                view.accText.visible = true;
+              } else {
+                view.accText.visible = false;
               }
 
-              boardContainer.addChild(catContainer);
+              view.catContainer.scale.set(scaleMultiplier * wiggleScale);
+              view.catContainer.rotation = wiggleAngle;
+              view.catContainer.visible = true;
             } else if (cellState === 'cross') {
-              const crossContainer = new PIXI.Container();
-              crossContainer.x = x + cellSize / 2;
-              crossContainer.y = y + cellSize / 2;
-              crossContainer.scale.set(scaleMultiplier);
+              view.catContainer.visible = false;
 
-              const crossGraphics = new PIXI.Graphics();
-              const padding = cellSize * 0.28;
-              crossGraphics.moveTo(-cellSize / 2 + padding, -cellSize / 2 + padding);
-              crossGraphics.lineTo(cellSize / 2 - padding, cellSize / 2 - padding);
-              crossGraphics.moveTo(cellSize / 2 - padding, -cellSize / 2 + padding);
-              crossGraphics.lineTo(-cellSize / 2 + padding, cellSize / 2 - padding);
-              crossGraphics.stroke({ width: 3, color: 0x94a3b8, alpha: 0.8 });
-              crossContainer.addChild(crossGraphics);
-
-              boardContainer.addChild(crossContainer);
+              view.crossGraphics.clear();
+              const padding = cellSize * 0.25;
+              view.crossGraphics.moveTo(-cellSize / 2 + padding, -cellSize / 2 + padding);
+              view.crossGraphics.lineTo(cellSize / 2 - padding, cellSize / 2 - padding);
+              view.crossGraphics.moveTo(cellSize / 2 - padding, -cellSize / 2 + padding);
+              view.crossGraphics.lineTo(-cellSize / 2 + padding, cellSize / 2 - padding);
+              view.crossGraphics.stroke({ width: 8, color: 0xffffff, alpha: 1.0, cap: 'round', join: 'round' });
+              view.crossGraphics.scale.set(scaleMultiplier);
+              view.crossGraphics.visible = true;
+            } else {
+              view.catContainer.visible = false;
+              view.crossGraphics.clear();
+              view.crossGraphics.visible = false;
             }
-
-            // Hit area with responsive debounced tap / double-tap handling
-            const hitArea = new PIXI.Graphics();
-            hitArea.rect(x, y, cellSize, cellSize);
-            hitArea.fill({ color: 0x000000, alpha: 0 });
-            hitArea.eventMode = 'static';
-            hitArea.cursor = 'pointer';
-
-            hitArea.on('pointerdown', (e) => {
-              e.stopPropagation();
-              const nowTime = performance.now();
-              const pending = pendingTapRef.current;
-
-              if (pending && pending.r === r && pending.c === c && nowTime - pending.time < 320) {
-                clearTimeout(pending.timer);
-                pendingTapRef.current = null;
-                currentData.onCellClick(r, c, 'double');
-                return;
-              }
-
-              if (pending) {
-                clearTimeout(pending.timer);
-                currentData.onCellClick(pending.r, pending.c, 'single');
-                pendingTapRef.current = null;
-              }
-
-              const timer = setTimeout(() => {
-                currentData.onCellClick(r, c, 'single');
-                pendingTapRef.current = null;
-              }, 220);
-
-              pendingTapRef.current = { r, c, time: nowTime, timer };
-            });
-
-            boardContainer.addChild(hitArea);
           }
         }
       });
@@ -339,20 +383,16 @@ export const PixiBoard: React.FC<PixiBoardProps> = ({
 
     return () => {
       isMounted = false;
-      if (pendingTapRef.current) {
-        clearTimeout(pendingTapRef.current.timer);
-        pendingTapRef.current = null;
-      }
       if (appRef.current) {
-        appRef.current.destroy(true, { children: true });
+        appRef.current.destroy(true, { children: true, texture: true });
         appRef.current = null;
       }
     };
   }, [level]);
 
   return (
-    <div className="flex justify-center items-center p-2 sm:p-2.5 bg-amber-50/60 rounded-2xl border border-amber-200/80 shadow-xs w-full max-w-full overflow-hidden box-border">
-      <div ref={containerRef} className="touch-none select-none flex justify-center items-center w-full" />
+    <div className="flex flex-col items-center justify-center select-none w-full">
+      <div ref={containerRef} className="rounded-2xl overflow-hidden shadow-lg bg-white p-1 border-2 border-orange-100" />
     </div>
   );
 };

@@ -129,44 +129,43 @@ export default function App() {
   // Placed cats count
   const placedCats = boardState.flat().filter((cell) => cell === 'cat').length;
 
-  // Handle cell click (single tap = cross, double tap = cat. Cats cannot be unmarked once placed)
-  const handleCellClick = (r: number, c: number, tapType: 'single' | 'double') => {
+  // Handle cell tap: Cycle empty -> cross -> empty. If tapped on cross or empty, single tap can also place cat or cycle.
+  // Wait, user request: "remove the double tap. just taping a block marked with cross marks it with a cat now"
+  // Let's implement cycle or direct tap logic:
+  // Empty -> Cross -> Cat -> Empty (or tap cross -> cat).
+  // Let's make:
+  // Empty -> Cross -> Cat -> Empty (or clicking a cross turns it into a cat!).
+  const handleCellClick = (r: number, c: number) => {
     if (isWon || hearts <= 0) return;
 
     const currentCell = boardState[r][c];
+    if (currentCell === 'cat') {
+      return; // cats cannot be unmarked once placed
+    }
+
     let nextCell: CellState = currentCell;
 
-    if (tapType === 'double') {
-      if (currentCell === 'cat') {
-        return; // cats cannot be unmarked once placed
-      } else {
-        const isSolutionCat = currentLevel.solution.some((s) => s.r === r && s.c === c);
+    if (currentCell === 'empty') {
+      nextCell = 'cross';
+      soundManager.playCross();
+    } else if (currentCell === 'cross') {
+      // Tapping a block marked with cross marks it with a cat now!
+      const isSolutionCat = currentLevel.solution.some((s) => s.r === r && s.c === c);
 
-        if (!isSolutionCat) {
-          soundManager.playError();
-          setWrongCatCell({ r, c, timestamp: performance.now() });
-          setHearts((h) => {
-            const nextH = Math.max(0, h - 1);
-            if (nextH === 0) {
-              setIsTimerRunning(false);
-            }
-            return nextH;
-          });
-          nextCell = currentCell; // do not place invalid cat, preserve cell state
-        } else {
-          nextCell = 'cat';
-          soundManager.playMeow();
-        }
-      }
-    } else {
-      if (currentCell === 'cat') {
-        return; // cats cannot be unmarked once placed
-      } else if (currentCell === 'cross') {
-        nextCell = 'empty';
-        soundManager.playClick();
-      } else if (currentCell === 'empty') {
-        nextCell = 'cross';
-        soundManager.playCross();
+      if (!isSolutionCat) {
+        soundManager.playError();
+        setWrongCatCell({ r, c, timestamp: performance.now() });
+        setHearts((h) => {
+          const nextH = Math.max(0, h - 1);
+          if (nextH === 0) {
+            setIsTimerRunning(false);
+          }
+          return nextH;
+        });
+        nextCell = 'empty'; // incorrect cat placement clears the cell
+      } else {
+        nextCell = 'cat';
+        soundManager.playMeow();
       }
     }
 
