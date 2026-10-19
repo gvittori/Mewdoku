@@ -11,7 +11,7 @@ import { RulesModal } from './components/RulesModal';
 import { WinModal } from './components/WinModal';
 import { GameOverModal } from './components/GameOverModal';
 import { soundManager } from './utils/audio';
-import { Play, BookOpen, Shirt } from 'lucide-react';
+import { Play, BookOpen } from 'lucide-react';
 
 export default function App() {
   const [screen, setScreen] = useState<GameScreen>('title');
@@ -372,9 +372,6 @@ export default function App() {
 
             <div>
               <h1 className="text-4xl font-extrabold text-amber-900 tracking-tight">Mewdoku</h1>
-              <p className="text-amber-700 text-sm mt-2 max-w-xs mx-auto leading-relaxed">
-                A cozy logic puzzle blending Sudoku, Queens, and Minesweeper with adorable cats!
-              </p>
             </div>
 
             <div className="flex flex-col gap-3 w-full max-w-xs">
@@ -384,14 +381,6 @@ export default function App() {
               >
                 <Play className="w-5 h-5 fill-current" />
                 <span>Play Puzzles</span>
-              </button>
-
-              <button
-                onClick={() => setScreen('wardrobe')}
-                className="flex items-center justify-center gap-2 w-full py-3 bg-amber-100 text-amber-900 font-bold rounded-2xl hover:bg-amber-200 active:scale-98 transition-all shadow-sm text-sm cursor-pointer"
-              >
-                <Shirt className="w-4 h-4" />
-                <span>Cat Wardrobe & Shop</span>
               </button>
 
               <button
